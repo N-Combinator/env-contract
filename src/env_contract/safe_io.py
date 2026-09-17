@@ -7,6 +7,8 @@ name is a symlink that resolves to one of them.
 
 import os
 
+from env_contract.errors import ParseError
+
 TEMPLATE_NAME = ".env.example"
 
 
@@ -31,3 +33,11 @@ def read_bytes(path: str) -> bytes:
         raise ForbiddenFileError(f"refusing to open {path}: may contain secret values")
     with open(path, "rb") as fh:
         return fh.read()
+
+
+def read_project_file(project: str, rel: str) -> bytes:
+    """Read ``rel`` under ``project``; an unreadable file is a ParseError on ``rel``."""
+    try:
+        return read_bytes(os.path.join(project, rel))
+    except OSError as exc:
+        raise ParseError(rel, None, f"cannot read file: {exc.strerror or exc}") from None

@@ -129,3 +129,6 @@ def main(argv: list[str] | None = None) -> int:
     except (ParseError, safe_io.ForbiddenFileError) as exc:
         print(f"env-contract: error: {exc}", file=sys.stderr)
         return EXIT_ERROR
+    except OSError as exc:  # backstop: exit 1 must only ever mean drift
+        print(f"env-contract: error: {exc.strerror or exc}", file=sys.stderr)
+        return EXIT_ERROR

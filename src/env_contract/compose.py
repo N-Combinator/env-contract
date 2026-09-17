@@ -39,7 +39,7 @@ def read_compose_names(project: str) -> tuple[set[str] | None, list[str]]:
     filename, warnings = find_compose_file(project)
     if filename is None:
         return None, warnings
-    data = safe_io.read_bytes(os.path.join(project, filename))
+    data = safe_io.read_project_file(project, filename)
     try:
         root = yaml.compose(data, Loader=yaml.SafeLoader)
     except yaml.YAMLError as exc:

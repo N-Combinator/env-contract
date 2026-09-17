@@ -77,7 +77,7 @@ Exit codes:
 | --- | --- |
 | 0 | all three lists are empty (`null` counts as empty; warnings do not affect the code) |
 | 1 | at least one list is non-empty |
-| 2 | usage error, Python `SyntaxError` or invalid YAML (reported on stderr as `path:line: ...`) |
+| 2 | usage error, Python `SyntaxError`, invalid YAML or a file that cannot be read (reported on stderr as `path:line: ...` or `path: ...`) |
 
 ## What is scanned
 
@@ -92,7 +92,8 @@ Exit codes:
 
 `import os as o`, `from os import environ, getenv` and their aliases are
 followed. A non-literal name (`os.getenv(name)`, f-strings, concatenation) is
-ignored and reported in `warnings`.
+ignored and reported in `warnings`. A `*.py` symlink whose target is missing (or
+that loops) is skipped with a warning.
 
 **B — `.env.example`** at the project root: `KEY=value`, `export KEY=value` and
 bare `KEY` lines; blank lines and `#` comments are skipped. Values are discarded.

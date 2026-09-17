@@ -13,7 +13,7 @@ def read_template_keys(project: str) -> tuple[set[str] | None, list[str]]:
     path = os.path.join(project, safe_io.TEMPLATE_NAME)
     if not os.path.isfile(path):
         return None, []
-    text = safe_io.read_bytes(path).decode("utf-8", errors="replace")
+    text = safe_io.read_project_file(project, safe_io.TEMPLATE_NAME).decode("utf-8", errors="replace")
     keys: set[str] = set()
     warnings: list[str] = []
     for lineno, raw in enumerate(text.splitlines(), start=1):

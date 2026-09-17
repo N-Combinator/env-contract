@@ -33,7 +33,10 @@ def scan_project(project: str) -> ScanResult:
         if safe_io.is_forbidden(full):
             result.warnings.append(f"{rel}: skipped, dotenv-style file names are never opened")
             continue
-        source = safe_io.read_bytes(full)
+        if os.path.islink(full) and not os.path.exists(full):
+            result.warnings.append(f"{rel}: skipped, broken symlink")
+            continue
+        source = safe_io.read_project_file(project, rel)
         try:
             tree = ast.parse(source, filename=rel)
         except SyntaxError as exc:

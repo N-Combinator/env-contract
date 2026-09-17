@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -203,3 +204,51 @@ def test_console_entry_point_as_a_real_process(fixture_project):
     assert json.loads(proc.stdout)["unused_in_code"] == ["UNUSED_TEMPLATE_VAR"]
     proc = subprocess.run([sys.executable, "-m", "env_contract", "check"], capture_output=True, text=True)
     assert proc.returncode == 2
+
+
+requires_non_root = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root can read files with mode 000"
+)
+
+
+@pytest.mark.parametrize("target", ["missing.py", "loop.py"])
+def test_broken_python_symlink_is_skipped_with_a_warning(write_project, check_json, target):
+    project = write_project({"a.py": 'import os\nos.getenv("A")\n', ".env.example": "A=\n"})
+    (project / "pkg").mkdir()
+    os.symlink(target, project / "pkg" / "loop.py")  # "loop.py" points at itself
+    code, report = check_json(project)
+    assert report["missing_in_template"] == []
+    assert report["warnings"][0] == "pkg/loop.py: skipped, broken symlink"
+    assert code == 0
+
+
+@requires_non_root
+@pytest.mark.parametrize("command", ["check", "template"])
+@pytest.mark.parametrize("rel", ["pkg/a.py", ".env.example", "compose.yaml"])
+def test_unreadable_file_exits_two_with_path(write_project, run, command, rel):
+    project = write_project(
+        {
+            "pkg/a.py": 'import os\nos.getenv("A")\n',
+            ".env.example": "A=\n",
+            "compose.yaml": "services:\n  web:\n    environment: [A]\n",
+        }
+    )
+    (project / rel).chmod(0)
+    try:
+        code, out, err = run(command, project, "--json") if command == "check" else run(command, project)
+    finally:
+        (project / rel).chmod(0o644)
+    assert code == 2
+    assert out == ""
+    assert err == f"env-contract: error: {rel}: cannot read file: Permission denied\n"
+
+
+def test_unexpected_os_error_exits_two(write_project, run, monkeypatch):
+    project = write_project({"a.py": "x = 1\n"})
+
+    def fail(project):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("env_contract.python_source.scan_project", fail)
+    code, out, err = run("check", project, "--json")
+    assert (code, out, err) == (2, "", "env-contract: error: Permission denied\n")
