@@ -37,3 +37,11 @@ def test_missing_template_returns_none(write_project):
     keys, warnings = read_template_keys(str(write_project({})))
     assert keys is None
     assert warnings == []
+
+
+def test_utf8_bom_is_not_part_of_the_first_key(write_project):
+    project = write_project({})
+    (project / ".env.example").write_bytes(b"\xef\xbb\xbfFIRST=1\nSECOND=\n")
+    keys, warnings = read_template_keys(str(project))
+    assert keys == {"FIRST", "SECOND"}
+    assert warnings == []
