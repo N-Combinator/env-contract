@@ -1,0 +1,15 @@
+services:
+  web:
+    image: "example/web:${IMAGE_TAG:-latest}"
+    environment:
+      - DATABASE_URL
+      - TIMEOUT=30
+      - DEBUG=${DEBUG:-0}
+    command: ["sh", "-c", "echo $$NOT_INTERPOLATED"]
+  worker:
+    image: example/worker
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      FEATURE_FLAG: "on"
+      REDIS_URL: redis://cache:6379/0
+      LOG_LEVEL: info
