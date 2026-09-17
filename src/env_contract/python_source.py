@@ -2,12 +2,15 @@
 
 import ast
 import os
+import warnings
 from dataclasses import dataclass, field
 
 from env_contract import safe_io
 from env_contract.errors import ParseError
 
 SKIP_DIRS = frozenset({".venv", "venv", "node_modules", ".git"})
+# Present at the root of every virtual environment, whatever the directory is called.
+VENV_MARKER = "pyvenv.cfg"
 
 
 @dataclass
@@ -16,19 +19,35 @@ class ScanResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def iter_python_files(project: str):
-    """Yield project-relative POSIX paths of ``*.py`` files, in sorted order."""
-    for dirpath, dirnames, filenames in os.walk(project):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+def _rel(project: str, path: str) -> str:
+    return os.path.relpath(path, project).replace(os.sep, "/")
+
+
+def _is_skipped_dir(dirpath: str, name: str) -> bool:
+    return name in SKIP_DIRS or os.path.isfile(os.path.join(dirpath, name, VENV_MARKER))
+
+
+def iter_python_files(project: str, warnings_out: list[str]):
+    """Yield project-relative POSIX paths of ``*.py`` files, in sorted order.
+
+    Directories that cannot be listed are reported in ``warnings_out``: their
+    files are unknown, so the result would otherwise be silently incomplete.
+    """
+
+    def onerror(exc: OSError) -> None:
+        rel = _rel(project, exc.filename) if exc.filename else "."
+        warnings_out.append(f"{rel}: skipped, cannot read directory: {exc.strerror or exc}")
+
+    for dirpath, dirnames, filenames in os.walk(project, onerror=onerror):
+        dirnames[:] = sorted(d for d in dirnames if not _is_skipped_dir(dirpath, d))
         for name in sorted(filenames):
             if name.endswith(".py"):
-                full = os.path.join(dirpath, name)
-                yield os.path.relpath(full, project).replace(os.sep, "/")
+                yield _rel(project, os.path.join(dirpath, name))
 
 
 def scan_project(project: str) -> ScanResult:
     result = ScanResult()
-    for rel in iter_python_files(project):
+    for rel in iter_python_files(project, result.warnings):
         full = os.path.join(project, rel)
         if safe_io.is_forbidden(full):
             result.warnings.append(f"{rel}: skipped, dotenv-style file names are never opened")
@@ -38,13 +57,23 @@ def scan_project(project: str) -> ScanResult:
             continue
         source = safe_io.read_project_file(project, rel)
         try:
-            tree = ast.parse(source, filename=rel)
+            # SyntaxWarning (e.g. invalid escape sequences) is about the scanned
+            # project, not about env-contract; keep stderr clean.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tree = ast.parse(source, filename=rel)
+            visitor = _EnvVisitor(rel)
+            visitor.visit(tree)
         except SyntaxError as exc:
             raise ParseError(rel, exc.lineno, exc.msg) from None
         except ValueError as exc:  # e.g. null bytes on Python < 3.12
             raise ParseError(rel, None, str(exc)) from None
-        visitor = _EnvVisitor(rel)
-        visitor.visit(tree)
+        except (RecursionError, MemoryError):
+            # Deeply nested code overflows the parser or the tree walk (the
+            # parser reports its own stack overflow as MemoryError). The file
+            # is valid Python, so it is skipped rather than failing the run.
+            result.warnings.append(f"{rel}: skipped, too deeply nested to analyse")
+            continue
         result.names |= visitor.names
         result.warnings.extend(visitor.warnings)
     return result

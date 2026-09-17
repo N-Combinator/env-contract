@@ -82,7 +82,9 @@ Exit codes:
 ## What is scanned
 
 **A — Python code.** Every `*.py` file under the project, recursively, skipping
-`.venv`, `venv`, `node_modules` and `.git` directories. Files are parsed with
+`.venv`, `venv`, `node_modules` and `.git` directories and any directory that
+contains a `pyvenv.cfg` (a virtual environment, whatever it is named — including
+one called `.env`). Files are parsed with
 `ast` (never imported or executed). String-literal names are collected from:
 
 - `os.getenv("X")`, `os.getenv("X", default)`
@@ -93,10 +95,14 @@ Exit codes:
 `import os as o`, `from os import environ, getenv` and their aliases are
 followed. A non-literal name (`os.getenv(name)`, f-strings, concatenation) is
 ignored and reported in `warnings`. A `*.py` symlink whose target is missing (or
-that loops) is skipped with a warning.
+that loops) is skipped with a warning, and so is a file nested too deeply for
+the parser or the tree walk. A directory that cannot be listed is reported in
+`warnings` with its path, since the names in it are unknown. Syntax warnings in
+the scanned code (such as invalid escape sequences) are not printed.
 
 **B — `.env.example`** at the project root: `KEY=value`, `export KEY=value` and
-bare `KEY` lines; blank lines and `#` comments are skipped. Values are discarded.
+bare `KEY` lines, read as UTF-8 (a leading byte order mark is ignored); blank
+lines and `#` comments are skipped. Values are discarded.
 A missing file is a warning.
 
 **C — Compose file** at the project root: the first of `compose.yaml`,

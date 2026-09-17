@@ -1,7 +1,10 @@
+import ast
+import warnings
+
 import pytest
 
 from env_contract.errors import ParseError
-from env_contract.python_source import scan_project
+from env_contract.python_source import _EnvVisitor, scan_project
 
 
 def scan(write_project, source: str, filename: str = "app.py"):
@@ -108,3 +111,66 @@ def test_python_file_with_dotenv_name_is_skipped(write_project):
     result = scan_project(str(project))
     assert result.names == {"A"}
     assert result.warnings == [".env.py: skipped, dotenv-style file names are never opened"]
+
+
+def test_virtual_environments_are_skipped_whatever_their_name(write_project):
+    project = write_project(
+        {
+            "a.py": 'import os\nos.getenv("A")\n',
+            # pyvenv.cfg marks a virtual environment root; broken files prove nothing inside is parsed.
+            "env/pyvenv.cfg": "home = /usr/bin\n",
+            "env/lib/site.py": 'import os\nos.getenv("FROM_ENV")\ndef broken(:\n',
+            ".env/pyvenv.cfg": "home = /usr/bin\n",
+            ".env/lib/site.py": 'import os\nos.getenv("FROM_DOT_ENV")\n',
+            "tools/py311/pyvenv.cfg": "home = /usr/bin\n",
+            "tools/py311/bin/x.py": "def broken(:\n",
+            # Only the directory holding pyvenv.cfg is a venv root; its parent is still scanned.
+            "pkg/b.py": 'import os\nos.getenv("B")\n',
+            "pkg/data/pyvenv.cfg": "not a marker for pkg\n",
+            "pkg/data/c.py": 'import os\nos.getenv("NOT_SCANNED")\n',
+        }
+    )
+    result = scan_project(str(project))
+    assert result.names == {"A", "B"}
+    assert result.warnings == []
+
+
+@pytest.mark.parametrize("depth", [2_000, 100_000])  # overflows the tree walk / the parser itself
+def test_deeply_nested_file_is_skipped_with_a_warning(write_project, depth):
+    project = write_project(
+        {
+            "a.py": 'import os\nos.getenv("A")\n',
+            "pkg/deep.py": 'import os\nos.getenv("DEEP")\nx = ' + "a + " * depth + "a\n",
+        }
+    )
+    result = scan_project(str(project))
+    assert result.names == {"A"}
+    assert result.warnings == ["pkg/deep.py: skipped, too deeply nested to analyse"]
+
+
+@pytest.mark.parametrize("error", [RecursionError, MemoryError])
+@pytest.mark.parametrize("owner, attr", [(ast, "parse"), (_EnvVisitor, "visit")])
+def test_overflow_in_parse_or_walk_is_a_warning(write_project, monkeypatch, error, owner, attr):
+    project = write_project({"a.py": 'import os\nos.getenv("A")\n', "b.py": 'import os\nos.getenv("B")\n'})
+    original = getattr(owner, attr)
+    calls = []
+
+    def overflow_once(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise error("too deep")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, attr, overflow_once)
+    result = scan_project(str(project))
+    assert result.names == {"B"}
+    assert result.warnings == ["a.py: skipped, too deeply nested to analyse"]
+
+
+def test_syntax_warnings_from_scanned_code_are_suppressed(write_project):
+    project = write_project({"a.py": 'import os\nos.getenv("A")\npattern = "\\d+"\n'})
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = scan_project(str(project))
+    assert result.names == {"A"}
+    assert [str(w.message) for w in caught] == []

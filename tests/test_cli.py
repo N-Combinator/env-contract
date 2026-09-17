@@ -252,3 +252,65 @@ def test_unexpected_os_error_exits_two(write_project, run, monkeypatch):
     monkeypatch.setattr("env_contract.python_source.scan_project", fail)
     code, out, err = run("check", project, "--json")
     assert (code, out, err) == (2, "", "env-contract: error: Permission denied\n")
+
+
+@requires_non_root
+def test_unreadable_directory_is_a_warning_with_its_path(write_project, check_json):
+    project = write_project(
+        {
+            "a.py": 'import os\nos.getenv("A")\n',
+            "pkg/sub/b.py": 'import os\nos.getenv("B")\n',
+            ".env.example": "A=\nB=\n",
+        }
+    )
+    (project / "pkg" / "sub").chmod(0)
+    try:
+        code, report = check_json(project)
+    finally:
+        (project / "pkg" / "sub").chmod(0o755)
+    # B is reported as unused, and the warning says why the scan is incomplete.
+    assert report["unused_in_code"] == ["B"]
+    assert report["warnings"][0] == "pkg/sub: skipped, cannot read directory: Permission denied"
+    assert code == 1
+
+
+def test_deeply_nested_python_is_a_warning_not_a_crash(write_project, check_json):
+    project = write_project(
+        {
+            "a.py": 'import os\nos.getenv("A")\n',
+            "deep.py": "x = " + "a + " * 100_000 + "a\n",
+            "walk.py": "x = " + "a + " * 2_000 + "a\n",
+            ".env.example": "A=\n",
+        }
+    )
+    code, report = check_json(project)  # also asserts stderr is empty
+    assert report["warnings"][:2] == [
+        "deep.py: skipped, too deeply nested to analyse",
+        "walk.py: skipped, too deeply nested to analyse",
+    ]
+    assert code == 0
+
+
+def test_syntax_warnings_do_not_reach_stderr(write_project):
+    project = write_project({"a.py": 'import os\nos.getenv("A")\nre_digits = "\\d+"\n', ".env.example": "A=\n"})
+    proc = subprocess.run(
+        [sys.executable, "-W", "always", "-m", "env_contract", "check", str(project), "--json"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.stderr == ""
+    assert proc.returncode == 0
+
+
+def test_virtualenv_named_dot_env_is_skipped(write_project, check_json):
+    project = write_project(
+        {
+            "a.py": 'import os\nos.getenv("A")\n',
+            ".env.example": "A=\n",
+            ".env/pyvenv.cfg": "home = /usr/bin\n",
+            ".env/lib/python3/site-packages/lib.py": 'import os\nos.getenv("VENDORED")\ndef broken(:\n',
+        }
+    )
+    code, report = check_json(project)
+    assert report["missing_in_template"] == []
+    assert code == 0
