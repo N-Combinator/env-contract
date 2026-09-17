@@ -1,0 +1,6 @@
+services:
+  api:
+    image: example/api
+    environment:
+      API_URL: ${API_URL:-http://localhost}
+      API_TOKEN: ${API_TOKEN}
